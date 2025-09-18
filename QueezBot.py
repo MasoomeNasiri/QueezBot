@@ -1,512 +1,468 @@
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot import types
+import translate as tr
+from Config import TOKEN
+import DDL as db
 
-TOKEN = "7690610155:AAFiZwYYZpTXg-UbNTldLQZuKbG4q7DlyOc"
+import os
+if os.environ.get("INIT_DB") == "1":
+    db.init_db()
+
 bot = telebot.TeleBot(TOKEN)
 
-user_data = {}
-registered_users = {}
+user_states = {}         
+teacher_panels = {}     
+student_exam_states = {} 
 
-exams_database = {
-    "متوسطه اول": {
-        "ریاضی": ["آزمون ریاضی نوبت اول", "آزمون ریاضی نوبت دوم"],
-        "علوم": ["آزمون علوم فصل 1", "آزمون علوم فصل 2"]
-    },
-    "متوسطه دوم": {
-        "ریاضی": ["آزمون ریاضی پایه دهم", "آزمون ریاضی پایه یازدهم"],
-        "فیزیک": ["آزمون فیزیک 1", "آزمون فیزیک 2"]
-    }
-}
-
-(
-    STATE_START,
-    STATE_CHOOSE_ACTION,
-    STATE_CHOOSE_ROLE,
-    STATE_GET_NAME,
-    STATE_GET_LESSONS,
-    STATE_ADD_MORE_LESSONS,
-    STATE_LOGIN,
-    STATE_STUDENT_DASHBOARD,
-    STATE_CHOOSE_EXAM_TYPE,
-    STATE_CHOOSE_EDUCATION_LEVEL,
-    STATE_ENTER_SUBJECT,
-    STATE_CHOOSE_EXAM
-) = range(12)
-
-
+# -------------------- شروع ربات --------------------
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
-    chat_id = message.chat.id
-    user = message.from_user
+def start_command(message):
+    bot.send_message(message.chat.id, "سلام 👋 خوش آمدید!")
+    show_main_menu(message.chat.id)
 
-    welcome_message = f"""
-سلام {user.first_name} عزیز! 👋
-به ربات آموزشی خوش آمدید.
 
-لطفا یکی از گزینه‌های زیر را انتخاب کنید:
-    """
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("ثبت‌نام 📝", callback_data='action_register'),
-        InlineKeyboardButton("ورود 🔑", callback_data='action_login')
+def show_main_menu(chat_id):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("🔑 ورود", callback_data="login"),
+        types.InlineKeyboardButton("📝 ثبت‌نام", callback_data="register")
     )
+    bot.send_message(chat_id, tr.CHOOSE_ACTION, reply_markup=markup)
 
-    bot.send_message(chat_id, welcome_message, reply_markup=keyboard)
-
-    # ذخیره وضعیت کاربر
-    user_data[chat_id] = {'state': STATE_CHOOSE_ACTION}
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('action_'))
-def process_action_selection(call):
-    chat_id = call.message.chat.id
-    action = call.data.split('_')[1]
-
-    if action == 'register':
-
-        ask_for_role(call)
-    elif action == 'login':
-
-        user_data[chat_id]['state'] = STATE_LOGIN
-        ask_for_login_role(call)
-
-
-def ask_for_role(call):
-    chat_id = call.message.chat.id
-
-    message = "لطفا نقش خود را انتخاب کنید:"
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("👨‍🏫 معلم", callback_data='role_teacher'),
-        InlineKeyboardButton("👨‍🎓 شاگرد", callback_data='role_student')
+@bot.callback_query_handler(func=lambda call: call.data == "register")
+def start_register(call):
+    user_states[call.message.chat.id] = {"step": "choose_role"}
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(tr.ROLE_TEACHER, callback_data="role_teacher"),
+        types.InlineKeyboardButton(tr.ROLE_STUDENT, callback_data="role_student")
     )
+    bot.edit_message_text(chat_id=call.message.chat.id,
+                          message_id=call.message.message_id,
+                          text=tr.ASK_ROLE,
+                          reply_markup=markup)
 
-    bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        text=message,
-        reply_markup=keyboard
-    )
+@bot.callback_query_handler(func=lambda call: call.data.startswith("role_"))
+def choose_role(call):
+    state = user_states.get(call.message.chat.id)
+    if not state:
+        return
+    role = call.data.replace("role_", "")
+    state["role"] = role
+    state["step"] = "firstname"
+    bot.edit_message_text(chat_id=call.message.chat.id,
+                          message_id=call.message.message_id,
+                          text=tr.ASK_FIRSTNAME)
 
-    user_data[chat_id]['state'] = STATE_CHOOSE_ROLE
-    bot.answer_callback_query(call.id)
+@bot.message_handler(func=lambda m: m.chat.id in user_states and user_states[m.chat.id]["step"] not in ["login_id", "login_password"])
+def handle_register(message):
+    state = user_states[message.chat.id]
+    step = state["step"]
 
+    if step == "firstname":
+        state["firstname"] = message.text
+        state["step"] = "lastname"
+        bot.send_message(message.chat.id, tr.ASK_LASTNAME)
 
-def ask_for_login_role(call):
-    chat_id = call.message.chat.id
+    elif step == "lastname":
+        state["lastname"] = message.text
+        state["step"] = "grade"
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.add(tr.GRADE_7, tr.GRADE_8, tr.GRADE_9)
+        bot.send_message(message.chat.id, tr.ASK_GRADE, reply_markup=markup)
 
-    message = "لطفا نقش خود را برای ورود انتخاب کنید:"
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("👨‍🏫 معلم", callback_data='login_teacher'),
-        InlineKeyboardButton("👨‍🎓 شاگرد", callback_data='login_student')
-    )
-
-    bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        text=message,
-        reply_markup=keyboard
-    )
-
-    bot.answer_callback_query(call.id)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('role_'))
-def process_role_selection(call):
-    chat_id = call.message.chat.id
-    role = call.data.split('_')[1]
-
-
-    user_data[chat_id]['role'] = role
-
-    if role == 'teacher':
-        role_text = "معلم"
-    else:
-        role_text = "شاگرد"
-
-
-    bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        text=f"شما نقش {role_text} را برای ثبت‌نام انتخاب کردید.\n\nلطفا نام و نام خانوادگی خود را وارد کنید:"
-    )
-
-
-    user_data[chat_id]['state'] = STATE_GET_NAME
-    bot.answer_callback_query(call.id)
-
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('login_'))
-def process_login_role_selection(call):
-    chat_id = call.message.chat.id
-    role = call.data.split('_')[1]
-
-
-    if chat_id in registered_users:
-        user_info = registered_users[chat_id]
-        if user_info['role'] == role:
-            # نقش مطابقت دارد
-            if role == 'teacher':
-                lessons = "\n".join([f"• {lesson}" for lesson in user_info.get('lessons', [])])
-                message = f"""
-✅ ورود با موفقیت انجام شد
-نقش: معلم 👨‍🏫
-نام: {user_info['name']}
-دروس تدریس:
-{lessons}
-                """
-
-                bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=call.message.message_id,
-                    text=message
-                )
-
-
-                show_restart_button(chat_id, call.message.message_id)
-            else:
-
-                welcome_msg = f"""
-سلام {user_info['name']} عزیز! 👋
-به پنل دانش‌آموزی خوش آمدید.
-
-چه کاری می‌خواهید انجام دهید؟
-                """
-
-                keyboard = InlineKeyboardMarkup()
-                keyboard.add(InlineKeyboardButton("شرکت در آزمون �", callback_data='take_exam'))
-
-                bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=call.message.message_id,
-                    text=welcome_msg,
-                    reply_markup=keyboard
-                )
-
-                user_data[chat_id]['state'] = STATE_STUDENT_DASHBOARD
+    elif step == "grade":
+        state["grade"] = message.text
+        if state["role"] == "teacher":
+            state["step"] = "subject"
+            markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+            markup.add(tr.SUBJECT_MATH, tr.SUBJECT_SCIENCE, tr.SUBJECT_FARSI, tr.SUBJECT_HISTORY)
+            bot.send_message(message.chat.id, tr.ASK_SUBJECT, reply_markup=markup)
         else:
+            state["step"] = "password"
+            bot.send_message(message.chat.id, tr.ASK_PASSWORD, reply_markup=types.ReplyKeyboardRemove())
 
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=f"⚠️ شما به عنوان {role} ثبت‌نام نکرده‌اید."
-            )
-            show_restart_button(chat_id, call.message.message_id)
-    else:
+    elif step == "subject":
+        state["subject"] = message.text
+        state["step"] = "password"
+        bot.send_message(message.chat.id, tr.ASK_PASSWORD, reply_markup=types.ReplyKeyboardRemove())
 
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="⚠️ شما هنوز ثبت‌نام نکرده‌اید. لطفا ابتدا ثبت‌نام کنید."
-        )
-        show_restart_button(chat_id, call.message.message_id)
+    elif step == "password":
+        state["password"] = message.text
+        conn = db.get_connection()
+        cursor = conn.cursor()
 
-    bot.answer_callback_query(call.id)
+        if state["role"] == "teacher":
+            cursor.execute("SELECT MAX(teacher_id) FROM teachers")
+            max_id = cursor.fetchone()[0] or 999
+            user_id = max_id + 1
+            cursor.execute("""INSERT INTO teachers (teacher_id, firstname, lastname, grade, subject, password)
+                              VALUES (%s,%s,%s,%s,%s,%s)""",
+                           (user_id, state["firstname"], state["lastname"], state["grade"],
+                            state["subject"], state["password"]))
+        else:
+            cursor.execute("SELECT MAX(student_id) FROM students")
+            max_id = cursor.fetchone()[0] or 9999
+            user_id = max_id + 1
+            cursor.execute("""INSERT INTO students (student_id, firstname, lastname, grade, password)
+                              VALUES (%s,%s,%s,%s,%s)""",
+                           (user_id, state["firstname"], state["lastname"], state["grade"], state["password"]))
 
-@bot.message_handler(func=lambda message:
-user_data.get(message.chat.id, {}).get('state') == STATE_GET_NAME)
-def process_name(message):
-    chat_id = message.chat.id
-    name = message.text
+        conn.commit()
+        conn.close()
 
+        bot.send_message(message.chat.id, tr.REGISTRATION_SUCCESS.format(user_id=user_id))
+        user_states.pop(message.chat.id)
+        show_main_menu(message.chat.id)
 
-    user_data[chat_id]['name'] = name
-
-    if user_data[chat_id]['role'] == 'teacher':
-        bot.send_message(chat_id, "لطفا نام اولین درس خود را وارد کنید:")
-        user_data[chat_id]['state'] = STATE_GET_LESSONS
-        user_data[chat_id]['lessons'] = []
-    else:
-        complete_registration(chat_id)
-
-
-
-@bot.message_handler(func=lambda message:
-user_data.get(message.chat.id, {}).get('state') in [STATE_GET_LESSONS, STATE_ADD_MORE_LESSONS])
-def process_lessons(message):
-    chat_id = message.chat.id
-    lesson = message.text
-    state = user_data[chat_id]['state']
-
-
-    user_data[chat_id]['lessons'].append(lesson)
-
-    if state == STATE_GET_LESSONS:
-
-        keyboard = InlineKeyboardMarkup()
-        keyboard.row(
-            InlineKeyboardButton("بله، اضافه کردن درس دیگر", callback_data='add_more_lessons'),
-            InlineKeyboardButton("خیر، ثبت‌نام کامل شد", callback_data='finish_registration')
-        )
-
-        bot.send_message(
-            chat_id,
-            f"درس '{lesson}' با موفقیت اضافه شد.\nآیا می‌خواهید درس دیگری اضافه کنید؟",
-            reply_markup=keyboard
-        )
-
-        user_data[chat_id]['state'] = STATE_ADD_MORE_LESSONS
-    else:
-
-        bot.send_message(
-            chat_id,
-            f"درس '{lesson}' با موفقیت اضافه شد.\nلطفا نام درس بعدی را وارد کنید یا از دکمه‌های زیر استفاده کنید:",
-            reply_markup=get_lessons_keyboard()
-        )
-
-
-def get_lessons_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("اتمام ثبت دروس", callback_data='finish_registration'),
-        InlineKeyboardButton("انصراف و شروع مجدد", callback_data='restart')
+@bot.callback_query_handler(func=lambda call: call.data == "login")
+def start_login(call):
+    user_states[call.message.chat.id] = {"step": "login_id"}
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=tr.ASK_LOGIN_ID
     )
-    return keyboard
+
+
+@bot.message_handler(func=lambda m: m.chat.id in user_states and user_states[m.chat.id]["step"] in ["login_id", "login_password"])
+def handle_login(message):
+    state = user_states[message.chat.id]
+    step = state["step"]
+
+    if step == "login_id":
+        state["login_id"] = message.text
+        state["step"] = "login_password"
+        bot.send_message(message.chat.id, tr.ASK_LOGIN_PASSWORD)
+
+    elif step == "login_password":
+        # تبدیل آیدی به عدد
+        try:
+            login_id = int(state["login_id"])
+        except ValueError:
+            bot.send_message(message.chat.id, "⚠️ لطفا نام کاربری یا رمز عبور را به درستی وارد کنید. برای اینکار از قسمت منو ربات را دوباره استارت کنید.")
+            return
+
+        password = message.text.strip()
+
+        conn = db.get_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # چک کردن معلم
+        cursor.execute("SELECT * FROM teachers WHERE teacher_id=%s AND password=%s", (login_id, password))
+        teacher = cursor.fetchone()
+
+        # چک کردن دانش‌آموز
+        cursor.execute("SELECT * FROM students WHERE student_id=%s AND password=%s", (login_id, password))
+        student = cursor.fetchone()
+        conn.close()
+
+        if teacher:
+            bot.send_message(message.chat.id, tr.LOGIN_SUCCESS)
+            user_states.pop(message.chat.id, None)
+            teacher_panels[message.chat.id] = {
+                "teacher_id": teacher["teacher_id"],
+                "step": None,
+                "questions": []
+            }
+            show_teacher_menu(message.chat.id)
+
+        elif student:
+            bot.send_message(message.chat.id, tr.LOGIN_SUCCESS)
+            user_states.pop(message.chat.id, None)
+            student_exam_states[message.chat.id] = {
+                "student_id": student["student_id"],
+                "step": None
+            }
+            show_student_menu(message.chat.id)
+
+        else:
+            bot.send_message(message.chat.id, tr.LOGIN_FAIL)
 
 
 
-@bot.callback_query_handler(func=lambda call: call.data in ['add_more_lessons', 'finish_registration'])
-def process_lessons_decision(call):
-    chat_id = call.message.chat.id
+def show_teacher_menu(chat_id):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(tr.NEW_EXAM_BTN, callback_data="teacher_new_exam"),
+        types.InlineKeyboardButton(tr.QUESTION_BANK_BTN, callback_data="teacher_question_bank")
+    )
+    bot.send_message(chat_id, tr.TEACHER_MENU, reply_markup=markup)
 
-    if call.data == 'add_more_lessons':
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="لطفا نام درس بعدی را وارد کنید:"
+@bot.callback_query_handler(func=lambda call: call.data == "teacher_new_exam")
+def teacher_new_exam(call):
+    teacher_panels[call.message.chat.id].update({"step": "choose_type", "questions": []})
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(tr.QUESTION_TYPE_TESTI, callback_data="q_testi"),
+        types.InlineKeyboardButton(tr.QUESTION_TYPE_BLANK, callback_data="q_blank"),
+        types.InlineKeyboardButton(tr.QUESTION_TYPE_YESNO, callback_data="q_yesno")
+    )
+    bot.edit_message_text(chat_id=call.message.chat.id,
+                          message_id=call.message.message_id,
+                          text=tr.CHOOSE_QUESTION_TYPE,
+                          reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("q_"))
+def choose_question_type(call):
+    state = teacher_panels.get(call.message.chat.id)
+    if not state:
+        return
+    qtype = call.data.replace("q_", "")
+    state["type"] = qtype
+    state["step"] = "ask_question"
+    bot.edit_message_text(chat_id=call.message.chat.id,
+                          message_id=call.message.message_id,
+                          text=tr.ASK_QUESTION_TEXT)
+
+@bot.message_handler(func=lambda m: m.chat.id in teacher_panels and teacher_panels[m.chat.id].get("step") in [
+    "ask_question","opt1","opt2","opt3","opt4","correct_option","answer","difficulty","score"
+])
+def handle_teacher_exam(message):
+    state = teacher_panels[message.chat.id]
+    step = state["step"]
+
+    if step == "ask_question":
+        state["question"] = message.text
+        if state["type"] == "testi":
+            state["step"] = "opt1"
+            bot.send_message(message.chat.id, tr.ASK_OPTION_1)
+        else:
+            state["step"] = "answer"
+            bot.send_message(message.chat.id, tr.ASK_CORRECT_ANSWER)
+
+    elif step == "opt1":
+        state["opt1"] = message.text
+        state["step"] = "opt2"
+        bot.send_message(message.chat.id, tr.ASK_OPTION_2)
+
+    elif step == "opt2":
+        state["opt2"] = message.text
+        state["step"] = "opt3"
+        bot.send_message(message.chat.id, tr.ASK_OPTION_3)
+
+    elif step == "opt3":
+        state["opt3"] = message.text
+        state["step"] = "opt4"
+        bot.send_message(message.chat.id, tr.ASK_OPTION_4)
+
+    elif step == "opt4":
+        state["opt4"] = message.text
+        state["step"] = "correct_option"
+        bot.send_message(message.chat.id, tr.ASK_CORRECT_OPTION)
+
+    elif step == "correct_option":
+        if message.text not in ["1", "2", "3", "4"]:
+            bot.send_message(message.chat.id, tr.ASK_CORRECT_OPTION)
+            return
+        state["answer"] = message.text
+        state["step"] = "difficulty"
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.add(tr.DIFFICULTY_EASY, tr.DIFFICULTY_MEDIUM, tr.DIFFICULTY_HARD)
+        bot.send_message(message.chat.id, tr.ASK_DIFFICULTY, reply_markup=markup)
+
+    elif step == "answer":
+        state["answer"] = message.text
+        state["step"] = "difficulty"
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.add(tr.DIFFICULTY_EASY, tr.DIFFICULTY_MEDIUM, tr.DIFFICULTY_HARD)
+        bot.send_message(message.chat.id, tr.ASK_DIFFICULTY, reply_markup=markup)
+
+    elif step == "difficulty":
+        state["difficulty"] = message.text
+        state["step"] = "score"
+        bot.send_message(message.chat.id, tr.ASK_SCORE, reply_markup=types.ReplyKeyboardRemove())
+
+    elif step == "score":
+        try:
+            score = float(message.text)
+        except:
+            bot.send_message(message.chat.id, tr.ASK_SCORE)
+            return
+        state["score"] = score
+
+        q = {
+            "type": state["type"],
+            "text": state["question"],
+            "options": [state.get("opt1"), state.get("opt2"), state.get("opt3"), state.get("opt4")],
+            "answer": state["answer"],
+            "difficulty": state["difficulty"],
+            "score": state["score"]
+        }
+        state["questions"].append(q)
+        state["step"] = "next_question"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton(tr.ADD_ANOTHER_BTN, callback_data="add_another"),
+            types.InlineKeyboardButton(tr.FINISH_EXAM_BTN, callback_data="finish_exam")
         )
-        user_data[chat_id]['state'] = STATE_GET_LESSONS
-    else:
+        bot.send_message(message.chat.id, tr.QUESTION_ADDED)
+        bot.send_message(message.chat.id, tr.ANOTHER_OR_END, reply_markup=markup)
 
-        complete_registration(chat_id)
+@bot.callback_query_handler(func=lambda call: call.data == "add_another")
+def add_another_question(call):
+    state = teacher_panels.get(call.message.chat.id)
+    if not state:
+        return
+    state["step"] = "choose_type"
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(tr.QUESTION_TYPE_TESTI, callback_data="q_testi"),
+        types.InlineKeyboardButton(tr.QUESTION_TYPE_BLANK, callback_data="q_blank"),
+        types.InlineKeyboardButton(tr.QUESTION_TYPE_YESNO, callback_data="q_yesno")
+    )
+    bot.edit_message_text(chat_id=call.message.chat.id,
+                          message_id=call.message.message_id,
+                          text=tr.CHOOSE_QUESTION_TYPE,
+                          reply_markup=markup)
 
-    bot.answer_callback_query(call.id)
 
+@bot.callback_query_handler(func=lambda call: call.data == "finish_exam")
+def finish_exam(call):
+    state = teacher_panels.get(call.message.chat.id)
+    if not state:
+        return
+    teacher_panels[call.message.chat.id]["step"] = "duration"
 
-def complete_registration(chat_id):
-    data = user_data[chat_id]
-    name = data['name']
-    role = data['role']
+    bot.send_message(call.message.chat.id, tr.ASK_DURATION, reply_markup=types.ReplyKeyboardRemove())
+    bot.register_next_step_handler(call.message,save_exam)
 
+def save_exam(message):
+    
 
-    registered_users[chat_id] = {
-        'name': name,
-        'role': role
+@bot.message_handler(func=lambda m: m.chat.id in teacher_panels and teacher_panels[m.chat.id].get("step") == "duration")
+def save_exam(message):
+    state = teacher_panels[message.chat.id]
+    try:
+        duration = int(message.text.strip())
+    except ValueError:
+        bot.send_message(message.chat.id, tr.ASK_DURATION)
+        return
+
+    teacher_id = state["teacher_id"]
+    exam_id, exam_code = db.create_exam(teacher_id, duration)
+
+    for q in state["questions"]:
+        db.add_question(
+            exam_id,
+            q["text"],
+            q["type"],
+            q["options"],
+            q["answer"],
+            q["difficulty"],
+            q["score"]
+        )
+
+    bot.send_message(message.chat.id, tr.EXAM_CREATED.format(exam_code=exam_code))
+
+  
+    teacher_panels[message.chat.id] = {
+        "teacher_id": teacher_id,
+        "step": None,
+        "questions": []
     }
 
-    if role == 'teacher':
-        registered_users[chat_id]['lessons'] = data.get('lessons', [])
-        lessons = "\n".join([f"• {lesson}" for lesson in data.get('lessons', [])])
-        message = f"""
-✅ ثبت‌نام با موفقیت انجام شد
-نقش: معلم 👨‍🏫
-نام: {name}
-دروس تدریس:
-{lessons}
-        """
-    else:
-        message = f"""
-✅ ثبت‌نام با موفقیت انجام شد
-نقش: شاگرد 👨‍🎓
-نام: {name}
-        """
 
-    # ارسال پیام تأیید
-    msg = bot.send_message(chat_id, message)
-
-    # نمایش دکمه شروع مجدد
-    show_restart_button(chat_id, msg.message_id)
-
-    # پاک کردن وضعیت کاربر
-    user_data[chat_id]['state'] = STATE_START
-
-
-
-def show_restart_button(chat_id, message_id):
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("شروع مجدد 🔄", callback_data='restart'))
-
-    bot.edit_message_reply_markup(
-        chat_id=chat_id,
-        message_id=message_id,
-        reply_markup=keyboard
+def show_student_menu(chat_id):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(tr.STUDENT_TAKE_EXAM, callback_data="take_exam"),
+        types.InlineKeyboardButton(tr.STUDENT_RESULTS, callback_data="student_results")
     )
+    bot.send_message(chat_id, tr.STUDENT_MENU, reply_markup=markup)
 
+@bot.callback_query_handler(func=lambda call: call.data == "take_exam")
+def take_exam(call):
+    state = student_exam_states.get(call.message.chat.id)
+    if not state:
+        return
+    state["step"] = "exam_code"
+    bot.send_message(call.message.chat.id, tr.ASK_EXAM_CODE)
 
+@bot.message_handler(func=lambda m: m.chat.id in student_exam_states and student_exam_states[m.chat.id].get("step") in ["exam_code", "answer_question"])
+def handle_student_exam(message):
+    state = student_exam_states[message.chat.id]
+    step = state["step"]
 
-@bot.callback_query_handler(func=lambda call: call.data == 'restart')
-def process_restart(call):
-    chat_id = call.message.chat.id
-    if chat_id in user_data:
-        del user_data[chat_id]
-    send_welcome(call.message)
-    bot.answer_callback_query(call.id)
+    if step == "exam_code":
+        exam_code = message.text
+        questions = db.get_exam_questions(exam_code)
+        if not questions:
+            bot.send_message(message.chat.id, tr.EXAM_NOT_FOUND)
+            return
+        state.update({"exam_code": exam_code, "questions": questions, "current": 0, "score": 0, "step": "answer_question"})
+        bot.send_message(message.chat.id, tr.EXAM_STARTED)
+        bot.send_message(message.chat.id, tr.ANSWER_PROMPT + "\n" + questions[0]["question_text"])
 
+    elif step == "answer_question":
+        question = state["questions"][state["current"]]
+        student_answer = message.text.strip()
+        correct = False
 
-@bot.callback_query_handler(func=lambda call: call.data == 'take_exam')
-def process_take_exam(call):
-    chat_id = call.message.chat.id
+        if question["question_type"] == "testi":
+            correct = (student_answer == question["correct_answer"])
+        else:
+            correct = (student_answer == question["correct_answer"])
 
-    message = "لطفا نوع آزمون مورد نظر خود را انتخاب کنید:"
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("1. آزمون‌های آزمایشی", callback_data='exam_type_mock'),
-        InlineKeyboardButton("2. آزمون‌های دبیر", callback_data='exam_type_teacher')
-    )
-
-    bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        text=message,
-        reply_markup=keyboard
-    )
-
-    user_data[chat_id]['state'] = STATE_CHOOSE_EXAM_TYPE
-    bot.answer_callback_query(call.id)
-
-
-# پردازش انتخاب نوع آزمون
-@bot.callback_query_handler(func=lambda call: call.data.startswith('exam_type_'))
-def process_exam_type_selection(call):
-    chat_id = call.message.chat.id
-    exam_type = call.data.split('_')[2]
-
-    if exam_type == 'mock':
-        # آزمون‌های آزمایشی
-        message = "لطفا مقطع مورد نظر خود را انتخاب کنید:"
-
-        keyboard = InlineKeyboardMarkup()
-        keyboard.row(
-            InlineKeyboardButton("متوسطه اول", callback_data='level_junior'),
-            InlineKeyboardButton("متوسطه دوم", callback_data='level_senior')
-        )
-        keyboard.add(InlineKeyboardButton("بازگشت ↩️", callback_data='back_to_exam_type'))
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=message,
-            reply_markup=keyboard
+        db.save_student_answer(
+            exam_id=question["exam_id"],
+            student_id=state["student_id"],
+            question_id=question["id"],
+            student_answer=student_answer,
+            is_correct=correct
         )
 
-        user_data[chat_id]['state'] = STATE_CHOOSE_EDUCATION_LEVEL
-        user_data[chat_id]['exam_type'] = exam_type
-    else:
+        if correct:
+            state["score"] += float(question["score"])
 
-        message = "شما آزمون‌های دبیر را انتخاب کردید.\n"
+        state["current"] += 1
+        if state["current"] >= len(state["questions"]):
+            db.save_result(
+                exam_id=question["exam_id"],
+                student_id=state["student_id"],
+                score=state["score"]
+            )
+            bot.send_message(message.chat.id, tr.EXAM_FINISHED.format(score=state["score"]))
+            student_exam_states.pop(message.chat.id, None)
+        else:
+            next_q = state["questions"][state["current"]]
+            bot.send_message(message.chat.id, tr.ANSWER_PROMPT + "\n" + next_q["question_text"])
 
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=message
+@bot.callback_query_handler(func=lambda call: call.data == "student_results")
+def show_results(call):
+    state = student_exam_states.get(call.message.chat.id)
+    if not state:
+        return
+    student_id = state["student_id"]
+    results = db.get_student_results(student_id)
+    if not results:
+        bot.send_message(call.message.chat.id, "⚠️ نتیجه‌ای برای شما یافت نشد.")
+        return
+
+    msg_lines = [tr.RESULTS_HEADER]
+    for r in results:
+        conn = db.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT student_id, score FROM results WHERE exam_id=%s ORDER BY score DESC",
+            (r["exam_id"],)
+        )
+        all_results = cursor.fetchall()
+        conn.close()
+
+        rank = 1
+        for res in all_results:
+            if res["student_id"] == student_id:
+                break
+            rank += 1
+
+        msg_lines.append(
+            tr.RESULT_LINE.format(exam_code=r["exam_code"], score=r["score"], rank=rank)
         )
 
-        show_restart_button(chat_id, call.message.message_id)
+    bot.send_message(call.message.chat.id, "\n".join(msg_lines))
 
-    bot.answer_callback_query(call.id)
+print("🤖 ربات در حال اجراست ...")
+bot.infinity_polling()
 
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('level_'))
-def process_education_level(call):
-    chat_id = call.message.chat.id
-    level = call.data.split('_')[1]
-
-    if level == 'junior':
-        level_text = "متوسطه اول"
-    else:
-        level_text = "متوسطه دوم"
-
-    user_data[chat_id]['education_level'] = level_text
-
-    bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        text=f"مقطع {level_text} انتخاب شد.\n\nلطفا نام درس مورد نظر خود را تایپ کنید:"
-    )
-
-    user_data[chat_id]['state'] = STATE_ENTER_SUBJECT
-    bot.answer_callback_query(call.id)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == 'back_to_exam_type')
-def process_back_to_exam_type(call):
-    chat_id = call.message.chat.id
-    process_take_exam(call)
-    bot.answer_callback_query(call.id)
-
-
-@bot.message_handler(func=lambda message:
-user_data.get(message.chat.id, {}).get('state') == STATE_ENTER_SUBJECT)
-def process_subject(message):
-    chat_id = message.chat.id
-    subject = message.text
-    level = user_data[chat_id]['education_level']
-
-    if level in exams_database and subject in exams_database[level]:
-        exams = exams_database[level][subject]
-        message_text = f"آزمون‌های موجود برای درس {subject}:\n\n"
-
-        keyboard = InlineKeyboardMarkup()
-        for i, exam in enumerate(exams, 1):
-            message_text += f"{i}. {exam}\n"
-            keyboard.add(InlineKeyboardButton(f"{i}. {exam}", callback_data=f'exam_{i}'))
-
-        message_text += "\nلطفا آزمون مورد نظر خود را انتخاب کنید:"
-
-        bot.send_message(chat_id, message_text, reply_markup=keyboard)
-
-        user_data[chat_id]['state'] = STATE_CHOOSE_EXAM
-        user_data[chat_id]['available_exams'] = exams
-        user_data[chat_id]['subject'] = subject
-    else:
-        bot.send_message(chat_id,
-                         f"⚠️ هیچ آزمونی برای درس {subject} در مقطع {level} یافت نشد. لطفا درس دیگری وارد کنید.")
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('exam_'))
-def process_exam_selection(call):
-    chat_id = call.message.chat.id
-    exam_index = int(call.data.split('_')[1]) - 1
-    exams = user_data[chat_id]['available_exams']
-    subject = user_data[chat_id]['subject']
-
-    if 0 <= exam_index < len(exams):
-        selected_exam = exams[exam_index]
-
-        # در اینجا می‌توانید کد آزمون را تولید یا از پایگاه داده دریافت کنید
-        exam_code = f"EXAM-{subject[:3].upper()}-{exam_index + 1:03d}"
-
-        message = f"""
-✅ آزمون شما انتخاب شد:
-درس: {subject}
-آزمون: {selected_exam}
-کد آزمون: {exam_code}
-
-برای شروع آزمون روی /start_exam کلیک کنید.
-        """
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=message
-        )
-
-        user_data[chat_id]['selected_exam'] = selected_exam
-        user_data[chat_id]['exam_code'] = exam_code
-
-        show_restart_button(chat_id, call.message.message_id)
-    else:
-        bot.answer_callback_query(call.id, "⚠️ آزمون انتخاب شده معتبر نیست!")
-
-    bot.answer_callback_query(call.id)
-
-
-if __name__ == '__main__':
-    print("ربات در حال اجراست...")
-    bot.infinity_polling()
