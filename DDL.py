@@ -1,22 +1,19 @@
 import mysql.connector
 from mysql.connector import errorcode
 
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",           
-    "password": "3381222384", 
-    "database": "queez"
-}
+from CONFIG import config
+
+
 
 def get_server_connection():
     """اتصال به سرور MySQL بدون انتخاب دیتابیس (برای ایجاد دیتابیس اگر لازم باشد)"""
-    cfg = DB_CONFIG.copy()
+    cfg =config.copy()
     cfg.pop("database", None)
     return mysql.connector.connect(**cfg)
 
 def get_connection():
-    """اتصال به دیتابیس مشخص (DB_CONFIG['database'])"""
-    return mysql.connector.connect(**DB_CONFIG)
+    """اتصال به دیتابیس مشخص (config['database'])"""
+    return mysql.connector.connect(**config)
 
 def init_db():
     """ایجاد دیتابیس و جداول (با حذف جداول قبلی ناسازگار)"""
@@ -24,7 +21,7 @@ def init_db():
         server_conn = get_server_connection()
         server_conn.autocommit = True
         cur = server_conn.cursor()
-        cur.execute("CREATE DATABASE IF NOT EXISTS `{}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci".format(DB_CONFIG["database"]))
+        cur.execute("CREATE DATABASE IF NOT EXISTS `{}` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci".format(config["database"]))
         server_conn.close()
     except mysql.connector.Error as e:
         print("خطا هنگام ایجاد دیتابیس:", e)
@@ -167,7 +164,7 @@ def add_question(exam_id, question_text, question_type, options, correct_answer,
     if question_type == "testi" and options:
 
         opt1, opt2, opt3, opt4 = (options + [None, None, None, None])[:4]
-    cursor.execute("""INSERT INTO questions 
+    cursor.execute("""INSERT INTO questions
                       (exam_id, question_text, question_type, option1, option2, option3, option4, correct_answer, difficulty, score)
                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                    (exam_id, question_text, question_type, opt1, opt2, opt3, opt4, correct_answer, difficulty, score))
@@ -218,3 +215,11 @@ def get_exam_questions(exam_code):
     questions = cursor.fetchall()
     conn.close()
     return questions
+
+
+if __name__ == "__main__":
+    try:
+        init_db()
+        print("✅ جداول با موفقیت ساخته شدند.")
+    except Exception as e:
+        print("❌ خطا در ساخت جدول‌ها:", e)

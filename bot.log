@@ -1,0 +1,62 @@
+import datetime
+import os
+
+# مسیر فایل لاگ
+LOG_FILE_PATH = "bot.log"
+
+def write_log(message):
+    """
+    نوشتن یک پیام در فایل لاگ
+    """
+    try:
+        # گرفتن زمان فعلی
+        now = datetime.datetime.now()
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # ساخت پیام لاگ
+        log_message = f"[{timestamp}] {message}\n"
+        
+        # ایجاد فولدر اگر نباشه
+        os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+        
+        # نوشتن در فایل
+        with open(LOG_FILE_PATH, "a", encoding="utf-8") as f:
+            f.write(log_message)
+    except Exception as e:
+        print(f"❌ خطا در نوشتن لاگ: {e}")
+
+def log_error(error_message):
+    """
+    لاگ کردن یک خطا
+    """
+    write_log(f"❌ ERROR: {error_message}")
+
+def log_info(info_message):
+    """
+    لاگ کردن یک اطلاعات
+    """
+    write_log(f"ℹ️ INFO: {info_message}")
+
+def log_warning(warning_message):
+    """
+    لاگ کردن یک هشدار
+    """
+    write_log(f"⚠️ WARNING: {warning_message}")
+
+def log_user_action(user_id, action):
+    """
+    لاگ کردن عمل یک کاربر
+    """
+    write_log(f"👤 USER {user_id}: {action}")
+
+def log_exam_action(exam_code, action):
+    """
+    لاگ کردن عمل مربوط به یک آزمون
+    """
+    write_log(f"📝 EXAM {exam_code}: {action}")
+
+def log_database_action(table_name, action):
+    """
+    لاگ کردن عمل مربوط به دیتابیس
+    """
+    write_log(f"💾 DATABASE {table_name}: {action}")
